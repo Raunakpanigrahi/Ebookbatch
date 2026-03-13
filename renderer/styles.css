@@ -685,6 +685,117 @@ body {
 }
 
 /* ══════════════════════════════════════════════════════════════
+   HOME EMPTY STATE
+══════════════════════════════════════════════════════════════ */
+.home-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+  text-align: center;
+  animation: fade-in 0.3s ease;
+  flex: 1;
+}
+
+.home-empty-state.hidden {
+  display: none;
+}
+
+.empty-icon-wrapper {
+  color: var(--accent);
+  background: var(--accent-dim);
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+  border: 1px solid var(--accent-glow);
+  box-shadow: 0 0 32px var(--accent-dim);
+}
+
+.empty-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 24px;
+}
+
+.btn--large {
+  padding: 12px 24px;
+  font-size: 16px;
+  border-radius: calc(var(--radius-sm) * 1.5);
+  box-shadow: 0 8px 24px var(--accent-glow);
+}
+
+.btn--large:hover {
+  box-shadow: 0 12px 32px rgba(110, 86, 233, 0.6);
+  transform: translateY(-2px);
+}
+
+.dropdown-container {
+  position: relative;
+  display: inline-block;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(22, 21, 31, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 160px;
+  box-shadow: var(--shadow-md);
+  z-index: 100;
+  animation: fade-in 0.2s ease;
+}
+
+.dropdown-menu.hidden {
+  display: none;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+  width: 100%;
+}
+
+.dropdown-item svg {
+  color: var(--text-muted);
+}
+
+.dropdown-item:hover {
+  background: var(--bg-hover);
+  color: var(--accent-light);
+}
+
+.dropdown-item:hover svg {
+  color: var(--accent-light);
+}
+
+/* ══════════════════════════════════════════════════════════════
    BUTTONS
 ══════════════════════════════════════════════════════════════ */
 .btn {

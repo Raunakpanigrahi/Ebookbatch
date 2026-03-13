@@ -83,6 +83,14 @@ const els = {
   btnFontDecrease: $('btn-font-decrease'),
   btnFontIncrease: $('btn-font-increase'),
   fontSizeDisplay: $('font-size-display'),
+
+  // Home Empty State
+  homeEmptyState: $('home-empty-state'),
+  homeDashboard: $('home-dashboard'),
+  btnHomeAddBooks: $('btn-home-add-books'),
+  homeAddDropdown: $('home-add-dropdown'),
+  btnHomeAddFiles: $('btn-home-add-files'),
+  btnHomeAddFolder: $('btn-home-add-folder'),
 };
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -186,6 +194,16 @@ function bindEvents() {
     if (e.key === 'Escape') closeReader();
     if (e.key === 'ArrowLeft') onReaderPrev();
     if (e.key === 'ArrowRight') onReaderNext();
+  });
+
+  // Home Empty State events
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('#btn-home-add-files')) {
+      if (els.fileInput) els.fileInput.click();
+    }
+    if (e.target.closest('#btn-home-add-folder')) {
+      onSelectFolder();
+    }
   });
 }
 
@@ -1279,6 +1297,14 @@ function renderHome() {
   const recentGrid = document.getElementById('home-recent-grid');
   const favRow = document.getElementById('home-favorites-row');
   const recentAddedRow = document.getElementById('home-recent-added-row');
+
+  if (state.files.length === 0) {
+    if (els.homeEmptyState) els.homeEmptyState.classList.remove('hidden');
+    if (els.homeDashboard) els.homeDashboard.classList.add('hidden');
+  } else {
+    if (els.homeEmptyState) els.homeEmptyState.classList.add('hidden');
+    if (els.homeDashboard) els.homeDashboard.classList.remove('hidden');
+  }
 
   if (recentGrid) {
     const recent = [...state.files].filter(f => f.lastOpened > 0).sort((a,b) => b.lastOpened - a.lastOpened).slice(0, 5);
