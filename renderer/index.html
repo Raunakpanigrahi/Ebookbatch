@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self' blob: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' 'unsafe-eval' 'unsafe-inline' blob: data:;" />
+  <title>Ebook Batch Converter</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400;1,500;1,600;1,700&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+
+  <!-- Background Glow Blobs -->
+  <div class="bg-glow">
+    <div class="glow-blob glow-blob--purple"></div>
+    <div class="glow-blob glow-blob--blue"></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════════
+     TITLE BAR (custom, draggable)
+════════════════════════════════════════════════════════════════════════════ -->
+  <div class="titlebar" id="titlebar">
+    <div class="titlebar-drag"></div>
+    <div class="titlebar-title">
+      <span class="titlebar-icon">⬡</span>
+      Ebook Batch Converter
+    </div>
+    <div class="titlebar-controls">
+      <button class="titlebar-btn" id="btn-minimize" title="Minimize">—</button>
+      <button class="titlebar-btn" id="btn-maximize" title="Maximize">⬜</button>
+      <button class="titlebar-btn titlebar-btn--close" id="btn-close" title="Close">✕</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════════
+     SIDEBAR
+════════════════════════════════════════════════════════════════════════════ -->
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="sidebar-logo">
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+            <rect width="28" height="28" rx="8" fill="var(--accent)" />
+            <path d="M7 8h9M7 12h12M7 16h8M7 20h10" stroke="white" stroke-width="1.8" stroke-linecap="round" />
+            <path d="M20 14l3 3-3 3" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </div>
+        <div>
+          <div class="sidebar-app-name">EbookBatch</div>
+          <div class="sidebar-version" id="app-version">v1.0.0</div>
+        </div>
+      </div>
+
+      <!-- Stats Cards -->
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="stat-total">0</div>
+          <div class="stat-label">Total Files</div>
+          <div class="stat-icon stat-icon--total">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path
+                d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z">
+              </path>
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+              <line x1="12" y1="22.08" x2="12" y2="12"></line>
+            </svg>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-converted">0</div>
+          <div class="stat-label">Converted</div>
+          <div class="stat-icon stat-icon--success">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-skipped">0</div>
+          <div class="stat-label">Skipped</div>
+          <div class="stat-icon stat-icon--skip">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <rect x="6" y="4" width="4" height="16"></rect>
+              <rect x="14" y="4" width="4" height="16"></rect>
+            </svg>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-failed">0</div>
+          <div class="stat-label">Failed</div>
+          <div class="stat-icon stat-icon--fail">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- Session Info -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-title">Session</div>
+        <div class="info-row">
+          <span class="info-label">Status</span>
+          <span class="badge badge--idle" id="session-status">Idle</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Est. Time</span>
+          <span class="info-value" id="eta-display">—</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Elapsed</span>
+          <span class="info-value" id="elapsed-display">—</span>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="sidebar-section sidebar-section--actions">
+        <div class="sidebar-section-title">Export</div>
+        <button class="btn btn--ghost btn--full" id="btn-save-folder" disabled>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
+            <polyline points="17 21 17 13 7 13 7 21" />
+            <polyline points="7 3 7 8 15 8" />
+          </svg>
+          Save to Folder
+        </button>
+        <button class="btn btn--ghost btn--full" id="btn-export-zip" disabled>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          Export as ZIP
+        </button>
+      </div>
+
+      <!-- Theme Toggle -->
+      <div class="sidebar-footer">
+        <button class="theme-toggle" id="btn-theme" title="Toggle theme">
+          <span class="theme-toggle-track">
+            <span class="theme-toggle-thumb"></span>
+          </span>
+          <span id="theme-label">Light Mode</span>
+        </button>
+        <div class="credit">Built by <strong>Raunak Panigrahi</strong></div>
+      </div>
+    </aside>
+
+    <!-- ═════════════════════════════════════════════════════════════════════
+       MAIN CONTENT
+  ══════════════════════════════════════════════════════════════════════ -->
+    <main class="main-content">
+
+      <!-- Drop Zone / Upload Area -->
+      <div class="upload-area" id="upload-area">
+        <div class="upload-zone" id="drop-zone">
+          <div class="upload-zone-inner" id="upload-zone-inner">
+            <div class="upload-icon-wrapper">
+              <svg class="upload-icon" width="48" height="48" viewBox="0 0 24 24" fill="none">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke="url(#upload-grad)" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round"></path>
+                <polyline points="17 8 12 3 7 8" stroke="url(#upload-grad)" stroke-width="2" stroke-linecap="round"
+                  stroke-linejoin="round"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15" stroke="url(#upload-grad)" stroke-width="2" stroke-linecap="round"
+                  stroke-linejoin="round"></line>
+                <defs>
+                  <linearGradient id="upload-grad" x1="0" y1="0" x2="0" y2="24" gradientUnits="userSpaceOnUse">
+                    <stop stop-color="#b886ff" />
+                    <stop offset="1" stop-color="#6e56e9" />
+                  </linearGradient>
+                </defs>
+              </svg>
+            </div>
+            <div class="upload-title">Drag & Drop Ebooks Here</div>
+            <div class="upload-subtitle">Supports PDF & EPUB files</div>
+          </div>
+        </div>
+        <div class="upload-actions">
+          <button class="btn btn--primary" id="btn-select-folder">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+            </svg>
+            Select Folder
+          </button>
+          <button class="btn btn--outline" id="btn-select-files">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+            </svg>
+            Select Files
+          </button>
+        </div>
+
+        <!-- Quick Tips -->
+        <div class="quick-tips">
+          <div class="tips-title">Quick Tips</div>
+          <div class="tips-grid">
+            <div class="tip-card">
+              <div class="tip-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                  <line x1="16" y1="13" x2="8" y2="13"></line>
+                  <line x1="16" y1="17" x2="8" y2="17"></line>
+                  <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+              </div>
+              Supports PDF & EPUB
+            </div>
+            <div class="tip-card">
+              <div class="tip-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+              </div>
+              Batch Convert Multiple Files
+            </div>
+            <div class="tip-card">
+              <div class="tip-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                  <line x1="12" y1="11" x2="12" y2="17"></line>
+                  <line x1="9" y1="14" x2="15" y2="14"></line>
+                </svg>
+              </div>
+              Drag Entire Folders
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Warning Banner -->
+      <div class="warning-banner hidden" id="warning-banner">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          <line x1="12" y1="9" x2="12" y2="13" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+        <span id="warning-text"></span>
+        <button class="warning-dismiss" id="btn-dismiss-warning">×</button>
+      </div>
+
+      <!-- Toolbar / File List Header -->
+      <div class="toolbar hidden" id="toolbar">
+        <div class="toolbar-left">
+          <div class="toolbar-title" id="file-list-header-text">0 files loaded</div>
+        </div>
+        <div class="toolbar-right">
+          <button class="btn btn--primary" id="btn-start-conversion" disabled>
+            Convert Files
+          </button>
+          <button class="btn btn--danger hidden" id="btn-cancel-conversion">
+            Cancel
+          </button>
+          <button class="btn btn--outline" id="btn-add-folder">
+            Select Folder
+          </button>
+          <button class="btn btn--outline" id="btn-add-files">
+            Select Files
+          </button>
+        </div>
+      </div>
+
+      <!-- Progress Bar -->
+      <div class="progress-section hidden" id="progress-section">
+        <div class="progress-header">
+          <span class="progress-label" id="progress-label">Converting…</span>
+          <span class="progress-pct" id="progress-pct">0%</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+          <div class="progress-glow" id="progress-glow" style="left:0%"></div>
+        </div>
+        <div class="progress-footer">
+          <span id="progress-detail">0 / 0 files</span>
+          <span id="progress-speed"></span>
+        </div>
+      </div>
+
+      <!-- File Table -->
+      <div class="table-wrapper hidden" id="table-wrapper">
+        <table class="file-table" id="file-table">
+          <thead>
+            <tr>
+              <th class="col-cover">Cover</th>
+              <th class="col-name sortable" data-sort="name">
+                File Name
+              </th>
+              <th class="col-type">Type</th>
+              <th class="col-size sortable" data-sort="size">
+                Size
+              </th>
+              <th class="col-status">Status</th>
+              <th class="col-action">Action</th>
+            </tr>
+          </thead>
+          <tbody id="file-table-body">
+          </tbody>
+        </table>
+        <div class="table-empty hidden" id="table-empty">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="8" y1="13" x2="16" y2="13" />
+            <line x1="8" y1="17" x2="12" y2="17" />
+          </svg>
+          <p>No matching files</p>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════════
+     READER OVERLAY
+════════════════════════════════════════════════════════════════════════════ -->
+  <div class="reader-overlay hidden" id="reader-overlay">
+    <div class="reader-toolbar">
+      <button class="reader-btn" id="btn-reader-back" title="Back (Esc)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="19" y1="12" x2="5" y2="12"></line>
+          <polyline points="12 19 5 12 12 5"></polyline>
+        </svg>
+      </button>
+      <div class="reader-title" id="reader-title">Book Title</div>
+      <div class="reader-controls">
+        <span class="reader-page-info" id="reader-page-info"></span>
+        <div class="pdf-controls hidden" id="pdf-controls">
+          <button class="reader-btn" id="btn-zoom-out" title="Zoom Out">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          </button>
+          <span class="pdf-zoom-level" id="pdf-zoom-level">100%</span>
+          <button class="reader-btn" id="btn-zoom-in" title="Zoom In">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          </button>
+        </div>
+        <button class="reader-btn" id="btn-reader-settings" title="Settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line>
+            <line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line>
+            <line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line>
+            <line x1="17" y1="16" x2="23" y2="16"></line>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Reader Settings Panel -->
+    <div class="reader-settings-panel hidden" id="reader-settings-panel">
+      <div class="settings-group">
+        <label>Theme</label>
+        <div class="theme-options">
+          <button class="theme-option" data-theme="light" style="background:#fff;color:#000;">A</button>
+          <button class="theme-option" data-theme="sepia" style="background:#f4ecd8;color:#5b4636;">A</button>
+          <button class="theme-option" data-theme="dark" style="background:#1a1a1a;color:#ccc;">A</button>
+        </div>
+      </div>
+      <div class="settings-group">
+        <label>Font Size</label>
+        <div class="font-size-controls">
+          <button class="font-btn" id="btn-font-decrease">A-</button>
+          <span id="font-size-display">100%</span>
+          <button class="font-btn" id="btn-font-increase">A+</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="reader-main">
+      <button class="nav-btn nav-btn--left" id="btn-reader-prev" title="Previous Page (Left Arrow)">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+      </button>
+      <div class="reader-content-wrapper">
+        <div id="reader-content"></div>
+      </div>
+      <button class="nav-btn nav-btn--right" id="btn-reader-next" title="Next Page (Right Arrow)">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="9 18 15 12 9 6"></polyline>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════════
+     TOAST CONTAINER
+════════════════════════════════════════════════════════════════════════════ -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Hidden file input for individual file selection -->
+  <input type="file" id="file-input" multiple accept=".pdf,.epub" style="display:none" />
+
+  <script src="../node_modules/pdfjs-dist/build/pdf.min.js"></script>
+  <script src="../node_modules/jszip/dist/jszip.min.js"></script>
+  <script src="../node_modules/epubjs/dist/epub.min.js"></script>
+  <script src="script.js" defer></script>
+</body>
+
+</html>
