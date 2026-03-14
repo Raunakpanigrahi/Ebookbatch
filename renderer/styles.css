@@ -1756,6 +1756,19 @@ body,
   justify-content: center;
   position: relative;
   z-index: 50; /* Below overlays so overlays catch clicks */
+  transition: max-width 0.3s ease, padding 0.3s ease;
+}
+
+.reader-overlay.is-fullscreen .reader-content-wrapper {
+  width: 100vw;
+  max-width: none;
+  padding: 0 max(80px, 6vw);
+}
+
+.reader-overlay.is-fullscreen #reader-content {
+  width: 100%;
+  max-width: none;
+  gap: 80px;
 }
 
 #reader-content {

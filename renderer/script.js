@@ -227,11 +227,10 @@ function bindEvents() {
   document.addEventListener('keydown', (e) => {
     if (!state.reader.active) return;
     if (e.key === 'Escape') {
-      if (document.fullscreenElement) {
-        document.exitFullscreen();
+      if (els.readerOverlay?.classList.contains('is-fullscreen')) {
+        onToggleFullscreen(); // Exit fullscreen
       } else {
-        closeReader(); // Assume exit reader if we press escape not-in-fullscreen
-        // window.electronAPI.toggleFullscreen(); // Removed fullscreen toggle on escape to prevent annoyance
+        closeReader(); // Close reader
       }
     }
     if (e.key === 'ArrowLeft') onReaderPrev();
@@ -1307,8 +1306,15 @@ function restoreReaderSettings() {
   } catch(e) {}
 }
 
-function onToggleFullscreen() {
-  window.electronAPI.toggleFullscreen();
+async function onToggleFullscreen() {
+  const isFS = await window.electronAPI.toggleFullscreen();
+  if (isFS) {
+    els.readerOverlay?.classList.add('is-fullscreen');
+  } else {
+    els.readerOverlay?.classList.remove('is-fullscreen');
+  }
+  // Allow UI reflow before kicking the EPUB engine
+  setTimeout(() => state.reader.rendition?.resize(), 200);
 }
 
 // -- PDF --
@@ -1338,8 +1344,8 @@ async function renderPdfPage(num) {
   els.readerContent.innerHTML = ''; // clear previous
   
   // Determine if we need to show two pages or one
-  // Simple heuristic: if window width > 800, render two side-by-side
-  const isLandscape = window.innerWidth > 800;
+  // Simple heuristic: if window width > 1100, render two side-by-side
+  const isLandscape = window.innerWidth > 1100;
   
   els.readerPageInfo.textContent = isLandscape ? `Page ${num}-${Math.min(num + 1, state.reader.pageCount)} of ${state.reader.pageCount}` : `Page ${num} of ${state.reader.pageCount}`;
   
@@ -1405,7 +1411,7 @@ function onReaderPrev() {
     state.reader.rendition?.prev();
   } else if (state.reader.type === 'pdf') {
     if (state.reader.pageNum <= 1) return;
-    const isLandscape = window.innerWidth > 800;
+    const isLandscape = window.innerWidth > 1100;
     const shift = isLandscape ? 2 : 1;
     state.reader.pageNum = Math.max(1, state.reader.pageNum - shift);
     renderPdfPage(state.reader.pageNum);
@@ -1416,7 +1422,7 @@ function onReaderNext() {
   if (state.reader.type === 'epub') {
     state.reader.rendition?.next();
   } else if (state.reader.type === 'pdf') {
-    const isLandscape = window.innerWidth > 800;
+    const isLandscape = window.innerWidth > 1100;
     const shift = isLandscape ? 2 : 1;
     if (state.reader.pageNum >= state.reader.pageCount) return;
     
@@ -1425,17 +1431,24 @@ function onReaderNext() {
   }
 }
 
-// Re-evaluate PDF layout on resize without full app re-renders
+// Re-evaluate layouts on resize without full app re-renders
 let resizeTimer;
 window.addEventListener('resize', () => {
-  if (state.reader.active && state.reader.type === 'pdf') {
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => {
+  if (!state.reader.active) return;
+  
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (state.reader.type === 'pdf') {
       // Re-trigger render to swap double/single view dynamically
       renderPdfPage(state.reader.pageNum);
-    }, 200);
-  }
+    } else if (state.reader.type === 'epub') {
+      // Force ePub.js to recalculate layout flow bounds on screen size shift
+      state.reader.rendition?.resize();
+    }
+  }, 200);
 });
+
+
 
 /* ══════════════════════════════════════════════════════════════
    PHASE 2 & 3: NEW LAYOUT, NAVIGATION & RENDERING LOGIC

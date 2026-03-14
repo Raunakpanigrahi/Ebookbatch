@@ -252,8 +252,11 @@ ipcMain.handle('window:minimize', () => mainWindow?.minimize());
  */
 ipcMain.handle('window:toggleFullscreen', () => {
   if (mainWindow) {
-    mainWindow.setFullScreen(!mainWindow.isFullScreen());
+    const isFS = !mainWindow.isFullScreen();
+    mainWindow.setFullScreen(isFS);
+    return isFS;
   }
+  return false;
 });
 
 /**
