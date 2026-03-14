@@ -114,10 +114,16 @@ const els = {
     }
   });
 
-  document.addEventListener('DOMContentLoaded', () => {
+  const initializeUI = () => {
     bindEvents();
     restoreTheme();
-  });
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeUI);
+  } else {
+    initializeUI();
+  }
 })();
 
 // ─── Event Binding ────────────────────────────────────────────────────────────
@@ -129,9 +135,9 @@ function bindEvents() {
 
   // Folder / file selection
   $('btn-select-folder')?.addEventListener('click', onSelectFolder);
-  $('btn-select-files')?.addEventListener('click', () => els.fileInput.click());
+  $('btn-select-files')?.addEventListener('click', onSelectFiles);
   $('btn-add-folder')?.addEventListener('click', onSelectFolder);
-  $('btn-add-files')?.addEventListener('click', () => els.fileInput.click());
+  $('btn-add-files')?.addEventListener('click', onSelectFiles);
   els.fileInput?.addEventListener('change', onFilesInputChange);
 
   // Drag and drop
@@ -202,21 +208,7 @@ function bindEvents() {
   document.addEventListener('click', async (e) => {
     // Add Files button
     if (e.target.closest('#btn-home-add-files')) {
-      if (window.electronAPI && window.electronAPI.openFiles) {
-        const filePaths = await window.electronAPI.openFiles();
-        if (filePaths && filePaths.length > 0) {
-          addFiles(Array.from(filePaths).map(p => ({
-            name: p.split(/[\\/]/).pop(),
-            path: p,
-            type: p.toLowerCase().endsWith('.epub') ? 'application/epub+zip' : 'application/pdf',
-            size: 0 // Size might not be strictly needed initially, or can be fetched
-          })));
-        }
-      } else {
-        // Fallback
-        const fileInput = document.getElementById('file-input');
-        if (fileInput) fileInput.click();
-      }
+      onSelectFiles();
     }
     // Add Folder button
     if (e.target.closest('#btn-home-add-folder')) {
@@ -257,7 +249,9 @@ function setupDragDrop() {
         const fileObjs = Array.from(e.dataTransfer.files);
         for (const f of fileObjs) {
           if (f.path) {
-            await loadFolder(require('path').dirname(f.path + '/x'));
+            const p = f.path;
+            const dir = p.substring(0, Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')));
+            await loadFolder(dir);
             return;
           }
         }
@@ -313,6 +307,29 @@ async function loadFolder(folderPath) {
     showToast(`Loaded ${result.files.length} files.`, 'success');
   } catch (err) {
     showToast(`Error scanning folder: ${err.message}`, 'error');
+  }
+}
+
+// ─── File Selection ───────────────────────────────────────────────────────────
+async function onSelectFiles() {
+  if (window.electronAPI && window.electronAPI.openFiles) {
+    const filePaths = await window.electronAPI.openFiles();
+    if (filePaths && filePaths.length > 0) {
+      addFiles(Array.from(filePaths).map(p => ({
+        id: generateId(p),
+        name: p.split(/[\\/]/).pop(),
+        path: p,
+        type: p.toLowerCase().endsWith('.epub') ? 'epub' : 'pdf',
+        size: 0,
+        sizeFormatted: '0 B',
+        status: p.toLowerCase().endsWith('.epub') ? 'skipped' : 'pending',
+        error: null,
+        outputPath: null,
+        selected: false,
+      })));
+    }
+  } else {
+    els.fileInput?.click();
   }
 }
 
@@ -1150,8 +1167,26 @@ function initEpubReader(arrayBuffer) {
   rendition.display();
 
   rendition.on("relocated", (location) => {
-    // Show rough percentage or just "EPUB Reader"
-    els.readerPageInfo.textContent = 'EPUB Document';
+    if (state.reader.file) {
+      if (book.locations && book.locations.length() > 0 && location.start) {
+         const pct = Math.round(book.locations.percentageFromCfi(location.start.cfi) * 100);
+         state.reader.file.progress = pct;
+         els.readerPageInfo.textContent = `EPUB Document (${pct}%)`;
+      } else {
+         els.readerPageInfo.textContent = 'EPUB Document';
+      }
+    }
+  });
+
+  book.ready.then(() => {
+    book.locations.generate(1600).then(() => {
+       const curLoc = rendition.currentLocation();
+       if (curLoc && curLoc.start) {
+         const pct = Math.round(book.locations.percentageFromCfi(curLoc.start.cfi) * 100);
+         if (state.reader.file) state.reader.file.progress = pct;
+         els.readerPageInfo.textContent = `EPUB Document (${pct}%)`;
+       }
+    }).catch(e => console.error("EPUB locations generation failed", e));
   });
 
   // Setup themes
@@ -1214,6 +1249,9 @@ async function initPdfReader(bytes) {
 async function renderPdfPage(num) {
   if (!state.reader.pdfDoc) return;
   els.readerPageInfo.textContent = `Page ${num} of ${state.reader.pageCount}`;
+  if (state.reader.file) {
+    state.reader.file.progress = Math.round((num / state.reader.pageCount) * 100);
+  }
   
   try {
     const page = await state.reader.pdfDoc.getPage(num);
@@ -1262,6 +1300,16 @@ function onReaderPrev() {
   } else if (state.reader.type === 'pdf') {
     if (state.reader.pageNum <= 1) return;
     state.reader.pageNum--;
+    renderPdfPage(state.reader.pageNum);
+  }
+}
+
+function onReaderNext() {
+  if (state.reader.type === 'epub') {
+    state.reader.rendition?.next();
+  } else if (state.reader.type === 'pdf') {
+    if (state.reader.pageNum >= state.reader.pageCount) return;
+    state.reader.pageNum++;
     renderPdfPage(state.reader.pageNum);
   }
 }
@@ -1466,9 +1514,6 @@ const originalCloseReader = closeReader;
 closeReader = function() {
   if (state.reader.active && state.reader.file) {
     state.reader.file.lastOpened = Date.now();
-    // dummy progress update since we don't have true pagination calculation hooked up everywhere yet
-    if (!state.reader.file.progress) state.reader.file.progress = 5; 
-    state.reader.file.progress = Math.min(100, state.reader.file.progress + 15);
   }
   originalCloseReader();
   renderCurrentView();
@@ -1538,9 +1583,7 @@ document.querySelectorAll('.library-toolbar .filter-tab').forEach(btn => {
 });
 
 // Open file dialog from library "Add Books" button
-document.getElementById('btn-add-books')?.addEventListener('click', () => {
-  document.getElementById('file-input')?.click();
-});
+document.getElementById('btn-add-books')?.addEventListener('click', onSelectFiles);
 
 // Initialize with home
 setTimeout(() => {
