@@ -155,6 +155,7 @@ const els = {
     if (window.electronAPI && window.electronAPI.library) {
       try {
         const books = await window.electronAPI.library.getBooks();
+        console.log('[Cover] Library loaded:', books?.length ?? 0, 'book(s)');
         if (books && books.length > 0) {
           const mapped = books.map(b => ({
             id: b.id,
@@ -165,7 +166,7 @@ const els = {
             sizeFormatted: b.totalPages > 0 ? `${b.totalPages} p.` : '—',
             status: b.format === 'epub' ? 'skipped' : 'pending',
             error: null,
-            coverUrl: b.coverImage,
+            coverUrl: b.coverImage || null,
             coverLoading: false,
             _libraryData: b
           }));
@@ -175,7 +176,18 @@ const els = {
           renderTable();
           renderLibraryGrid();
           showUI();
-        }
+
+          // ── CRITICAL: Trigger cover extraction for books missing a cover ──
+          // Previously loadCoversFor() was ONLY called from addFiles() (manual import).
+          // Books loaded from library at startup NEVER had covers extracted.
+          // This is why all [Cover] debug logs were absent — the code never ran.
+          const needsCovers = mapped.filter(f => !f.coverUrl);
+          console.log('[Cover] Books needing extraction at startup:', needsCovers.length);
+          if (needsCovers.length > 0) {
+            needsCovers.forEach(f => { f.coverLoading = true; });
+            loadCoversFor(needsCovers);
+          }
+        } // end if (books && books.length > 0)
       } catch (e) {
         console.error('Failed to load library:', e);
       }
@@ -592,17 +604,30 @@ async function addFiles(newFiles) {
           totalPages: f.size
         });
         if (res.success) {
+          // Brand new book — no existing cover
           f._libraryData = res.book;
+          f.coverUrl = null;
+          f.coverLoading = true;
           addedBooks.push(f);
+        } else if (res.book) {
+          // Already in library — restore the saved cover so we don't lose it
+          f._libraryData = res.book;
+          f.coverUrl = res.book.coverImage || null;
+          f.coverLoading = false;
+          // Still try to extract cover if it was never saved
+          if (!f.coverUrl) {
+            f.coverLoading = true;
+            addedBooks.push(f);
+          }
         }
       } catch (e) {
         console.error('Failed to add book to library:', e);
       }
     } else {
+      f.coverUrl = null;
+      f.coverLoading = true;
       addedBooks.push(f);
     }
-    f.coverUrl = null;
-    f.coverLoading = true;
   }
 
   state.files.push(...addedBooks);
@@ -621,17 +646,28 @@ async function loadCoversFor(files) {
   for (const f of files) {
     try {
       const b64Data = await extractCoverBase64(f);
-      if (b64Data && window.electronAPI && window.electronAPI.library) {
-        const res = await window.electronAPI.library.saveCover(f.id, b64Data);
-        if (res.success) {
-          f.coverUrl = res.coverUrl;
-          if (f._libraryData) f._libraryData.coverImage = res.coverUrl;
+      if (b64Data) {
+        if (window.electronAPI && window.electronAPI.library) {
+          const res = await window.electronAPI.library.saveCover(f.id, b64Data);
+          if (res.success) {
+            f.coverUrl = res.coverUrl;
+            if (f._libraryData) f._libraryData.coverImage = res.coverUrl;
+          } else {
+            // saveCover failed (book not found in DB yet) — use inline data URL as fallback
+            console.warn('saveCover failed for', f.name, '— using inline data URL');
+            f.coverUrl = `data:image/jpeg;base64,${b64Data}`;
+          }
         } else {
-          f.coverUrl = null;
+          // No library API — use inline data URL
+          f.coverUrl = `data:image/jpeg;base64,${b64Data}`;
         }
+      } else {
+        // No cover found in the file — leave coverUrl as null (placeholder will show)
+        f.coverUrl = null;
       }
     } catch (e) {
       console.warn('Cover extraction failed for', f.name, e);
+      f.coverUrl = null;
     } finally {
       f.coverLoading = false;
       updateRowCover(f.id);
@@ -642,7 +678,10 @@ async function loadCoversFor(files) {
 
 async function extractCoverBase64(file) {
   const result = await window.electronAPI.readFileBase64(file.path);
-  if (!result.success) return null;
+  if (!result.success) {
+    console.warn('[Cover] readFileBase64 failed for', file.name, result.error);
+    return null;
+  }
 
   const binaryString = atob(result.base64);
   const len = binaryString.length;
@@ -653,36 +692,182 @@ async function extractCoverBase64(file) {
 
   if (file.type === 'pdf') {
     if (!window.pdfjsLib) return null;
-    const loadingTask = pdfjsLib.getDocument({ data: bytes });
-    const pdf = await loadingTask.promise;
-    const page = await pdf.getPage(1);
-    const viewport = page.getViewport({ scale: 0.5 });
-
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-
-    await page.render({ canvasContext: context, viewport }).promise;
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-    return dataUrl.split(',')[1];
-  } else if (file.type === 'epub') {
-    if (!window.ePub) return null;
-    const book = ePub(bytes.buffer);
-    const coverUrl = await book.coverUrl();
-    if (coverUrl) {
-      // It's a blob url from epub.js, convert to base64
-      const response = await fetch(coverUrl);
-      const blob = await response.blob();
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          resolve(reader.result.split(',')[1]);
-        };
-        reader.readAsDataURL(blob);
-      });
+    try {
+      const loadingTask = pdfjsLib.getDocument({ data: bytes });
+      const pdf = await loadingTask.promise;
+      const page = await pdf.getPage(1);
+      const viewport = page.getViewport({ scale: 0.5 });
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: context, viewport }).promise;
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+      return dataUrl.split(',')[1];
+    } catch (e) {
+      console.warn('[Cover] PDF page render failed for', file.name, e);
+      return null;
     }
   }
+
+  if (file.type === 'epub') {
+    if (!window.ePub) return null;
+    const book = ePub(bytes.buffer);
+    try {
+      await book.ready;
+      return await extractEpubCoverWithFallbacks(book, file.name);
+    } catch (e) {
+      console.warn('[Cover] EPUB cover extraction error for', file.name, e);
+      return null;
+    } finally {
+      try { book.destroy(); } catch (_) {}
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Multi-strategy EPUB cover extraction.
+ * Tries 4 strategies in order, returning base64 on first success.
+ *
+ * KEY RULE: book.archive.createUrl() requires a RESOLVED path (absolute within
+ * the zip, e.g. "OEBPS/images/cover.jpg"), NOT a raw manifest href.
+ * Always call book.resolve(href) first.
+ */
+async function extractEpubCoverWithFallbacks(book, fileName) {
+  // Helper: fetch a blob/object URL and return base64 string
+  async function urlToBase64(url) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`fetch failed ${response.status} for ${url}`);
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const r = reader.result;
+        if (r && r.includes(',')) resolve(r.split(',')[1]);
+        else reject(new Error('FileReader result invalid'));
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  /**
+   * Convert a manifest href → resolved archive path → blob URL → base64.
+   * This is the correct epub.js contract:
+   *   book.resolve(href)  → absolute path within zip (e.g. OEBPS/images/cover.jpg)
+   *   book.archive.createUrl(resolved) → blob: URL
+   */
+  async function hrefToBase64(href) {
+    if (!href || !book.archive) return null;
+    try {
+      const resolved = book.resolve(href);
+      console.log(`[Cover] hrefToBase64: href="${href}" → resolved="${resolved}"`);
+      const blobUrl = await book.archive.createUrl(resolved);
+      if (!blobUrl) return null;
+      return await urlToBase64(blobUrl);
+    } catch (e) {
+      console.warn(`[Cover] hrefToBase64 failed for href="${href}":`, e.message);
+      return null;
+    }
+  }
+
+  // ── Strategy 1: Standard epub.js coverUrl() ─────────────────────────────────
+  // Works for well-formed EPUB2 (name="cover" meta) and EPUB3 (properties="cover-image")
+  try {
+    const coverUrl = await book.coverUrl();
+    if (coverUrl) {
+      console.log('[Cover] S1 (coverUrl) success for', fileName, '→', coverUrl.slice(0, 60));
+      return await urlToBase64(coverUrl);
+    }
+    console.log('[Cover] S1 (coverUrl) returned null for', fileName);
+  } catch (e) {
+    console.warn('[Cover] S1 failed for', fileName, ':', e.message);
+  }
+
+  // ── Strategy 2: Manifest scan by properties / id / href ─────────────────────
+  // Handles EPUBs where cover image exists in manifest but metadata is non-standard
+  try {
+    const manifest = book.packaging?.manifest || {};
+    const items = Object.values(manifest);
+    console.log(`[Cover] S2: scanning ${items.length} manifest items for`, fileName);
+
+    const imageItems = items.filter(item => item.type && item.type.startsWith('image/'));
+    console.log(`[Cover] S2: found ${imageItems.length} image items`);
+
+    const candidate =
+      imageItems.find(i => i.properties && i.properties.includes('cover-image')) ||
+      imageItems.find(i => i.id && /cover/i.test(i.id)) ||
+      imageItems.find(i => i.href && /cover/i.test(i.href)) ||
+      imageItems.find(i => i.id && /title/i.test(i.id)) ||
+      imageItems.find(i => i.href && /title/i.test(i.href));
+
+    if (candidate) {
+      console.log('[Cover] S2: candidate found:', candidate.href, 'for', fileName);
+      const b64 = await hrefToBase64(candidate.href);
+      if (b64) { console.log('[Cover] S2 success for', fileName); return b64; }
+      console.warn('[Cover] S2: candidate found but hrefToBase64 failed for', fileName);
+    } else {
+      console.log('[Cover] S2: no cover candidate in manifest for', fileName);
+    }
+  } catch (e) {
+    console.warn('[Cover] S2 failed for', fileName, ':', e.message);
+  }
+
+  // ── Strategy 3: First image in the first spine document ─────────────────────
+  // Handles EPUBs where the cover is a separate XHTML page with a full-page <img>
+  try {
+    const spineItem = book.spine?.get(0);
+    if (spineItem) {
+      console.log('[Cover] S3: loading spine item 0 for', fileName);
+      await spineItem.load(book.load.bind(book));
+      const doc = spineItem.document;
+      if (doc) {
+        const imgs = Array.from(doc.querySelectorAll('img[src], image[xlink\\:href]'));
+        console.log(`[Cover] S3: found ${imgs.length} images in spine[0] for`, fileName);
+        for (const img of imgs) {
+          const src = img.getAttribute('src') || img.getAttribute('xlink:href') || '';
+          if (!src) continue;
+          // Resolve relative to spine item's OPF path using book.resolve
+          const resolvedHref = book.resolve(src);
+          console.log('[Cover] S3: trying img src:', src, '→ resolved:', resolvedHref);
+          const b64 = await hrefToBase64(resolvedHref);
+          if (b64) {
+            spineItem.unload();
+            console.log('[Cover] S3 success for', fileName);
+            return b64;
+          }
+        }
+      }
+      spineItem.unload();
+    }
+  } catch (e) {
+    console.warn('[Cover] S3 failed for', fileName, ':', e.message);
+  }
+
+  // ── Strategy 4: First JPEG then any image in the manifest ───────────────────
+  // Last resort: just grab the first image we can decode from this EPUB
+  try {
+    const manifest = book.packaging?.manifest || {};
+    const items = Object.values(manifest);
+    const imageItems = items.filter(i => i.type && i.type.startsWith('image/'));
+    // Prefer JPEG (most covers are JPEG); fallback to PNG/etc
+    const sorted = [
+      ...imageItems.filter(i => i.type === 'image/jpeg'),
+      ...imageItems.filter(i => i.type !== 'image/jpeg'),
+    ];
+    console.log(`[Cover] S4: trying ${Math.min(sorted.length, 5)} image(s) for`, fileName);
+    for (const item of sorted.slice(0, 5)) {
+      console.log('[Cover] S4: trying:', item.href);
+      const b64 = await hrefToBase64(item.href);
+      if (b64) { console.log('[Cover] S4 success for', fileName); return b64; }
+    }
+  } catch (e) {
+    console.warn('[Cover] S4 failed for', fileName, ':', e.message);
+  }
+
+  console.warn('[Cover] All 4 strategies exhausted for', fileName, '— no cover found');
   return null;
 }
 
