@@ -2196,7 +2196,7 @@ function navigateTo(viewName) {
   }
 
   // Update nav active states
-  document.querySelectorAll('.sidebar-nav .nav-item').forEach(el => {
+  document.querySelectorAll('.nav-item[data-view]').forEach(el => {
     if (el.dataset.view === viewName) {
       el.classList.add('active');
     } else {
@@ -2406,7 +2406,7 @@ updateRowCover = function(id) {
 };
 
 // Bind new nav listeners
-document.querySelectorAll('.sidebar-nav .nav-item').forEach(btn => {
+document.querySelectorAll('.nav-item[data-view]').forEach(btn => {
   btn.addEventListener('click', (e) => {
     const view = e.currentTarget.dataset.view;
     if (view) navigateTo(view);
