@@ -591,9 +591,10 @@ function onFilesInputChange(e) {
 
 // ─── Add Files to State ───────────────────────────────────────────────────────
 async function addFiles(newFiles) {
-  // Deduplicate by path
-  const existingPaths = new Set(state.files.map(f => f.path));
-  const unique = newFiles.filter(f => !existingPaths.has(f.path));
+  // Deduplicate by path safely across OS formats
+  const norm = p => (p || '').replace(/\\/g, '/').toLowerCase();
+  const existingPaths = new Set(state.files.map(f => norm(f.path)));
+  const unique = newFiles.filter(f => !existingPaths.has(norm(f.path)));
 
   if (unique.length === 0) return;
 
@@ -625,9 +626,13 @@ async function addFiles(newFiles) {
             // Stored cover is missing or invalid — schedule re-extraction
             addedBooks.push(f);
           }
+        } else {
+          console.error('[Library] Add failed:', res.error);
+          showToast(`Save failed: ${res.error}`, 'error');
         }
       } catch (e) {
         console.error('Failed to add book to library:', e);
+        showToast('System error adding book', 'error');
       }
     } else {
       f.coverUrl = null;
@@ -667,16 +672,24 @@ function isValidCoverUrl(url) {
 }
 
 async function loadCoversFor(files) {
+  console.log('[COVER DEBUG 1] loadCoversFor triggered, books count:', files?.length);
   for (const f of files) {
+    console.log('[COVER DEBUG 2] Extracting cover for:', f.id, f.path);
     try {
       const b64Data = await extractCoverBase64(f);
 
       // Guard: reject corrupted / micro-sized data that can't be a real image
-      if (b64Data && b64Data.length >= MIN_COVER_B64_LEN) {
+      const isValid = (b64Data && b64Data.length >= MIN_COVER_B64_LEN);
+      console.log('[COVER DEBUG 5] Validation result for:', f.id, 'valid:', !!isValid, 'src preview:', b64Data?.substring(0, 50));
+      
+      if (isValid) {
         if (window.electronAPI && window.electronAPI.library) {
+          console.log('[COVER DEBUG 3] IPC cover request sent for:', f.id);
           const res = await window.electronAPI.library.saveCover(f.id, b64Data);
+          console.log('[COVER DEBUG 4] IPC cover response for:', f.id, 'result type:', typeof res, 'length:', res?.coverUrl?.length ?? 'null');
           if (res.success) {
             f.coverUrl = res.coverUrl;
+            console.log('[COVER DEBUG 6] Assigned coverUrl to:', f.id, 'url preview:', f.coverUrl?.substring(0, 50));
             if (f._libraryData) f._libraryData.coverImage = res.coverUrl;
           } else {
             // saveCover failed (book not found in DB yet) — use inline data URL as fallback
@@ -951,14 +964,15 @@ function updateCardCover(id) {
     'linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%)',
   ];
 
-  // Find all cards in the library grid that correspond to this file.
-  // Cards don't have a direct data-id, so we match via the remove-button's data-id.
-  const cards = els.libraryGrid?.querySelectorAll('.book-card');
-  if (!cards) return;
+  // Find all cards in ALL views (Home, Library) that correspond to this file.
+  // Cards have data-id on the root element.
+  const cards = document.querySelectorAll(`.book-card[data-id="${id}"]`);
+  if (!cards || cards.length === 0) return;
 
   for (const card of cards) {
-    const removeBtn = card.querySelector('[data-action="remove"][data-id]');
-    if (!removeBtn || removeBtn.dataset.id !== id) continue;
+    // The query selector `document.querySelectorAll('.book-card[data-id="..."]')` 
+    // already guaranteed this card maps exactly to the file ID. We do not need 
+    // a redundant internal child check.
 
     const container = card.querySelector('.book-cover-container');
     if (!container) continue;
@@ -969,14 +983,15 @@ function updateCardCover(id) {
 
     const newCover = document.createElement(file.coverUrl ? 'img' : 'div');
     if (file.coverUrl) {
+      console.log('[COVER DEBUG 7] Setting img src for:', file.id, 'src preview:', file.coverUrl?.substring(0, 50));
       newCover.src = file.coverUrl;
       newCover.className = 'book-cover';
       newCover.alt = 'Cover';
       newCover.addEventListener('load', () =>
         console.log('[Cover] Card IMG OK:', file.name)
       );
-      newCover.addEventListener('error', () => {
-        console.error('[Cover] Card IMG FAIL:', file.name, file.coverUrl);
+      newCover.addEventListener('error', function() {
+        console.error('[COVER DEBUG 8] IMG FAILED for:', file.id, 'src:', this.src?.substring(0, 80));
         // Replace broken image with gradient placeholder so card is never blank
         newCover.replaceWith(
           Object.assign(document.createElement('div'), {
@@ -2710,12 +2725,15 @@ function createBookCardElement(file, mode) {
   
   card.dataset.id = file.id;
 
-  // Set info
-  card.querySelector('.book-title').textContent = truncate(file.name.replace(/\.[^/.]+$/, ""), 40);
+  // Set info safely with fallbacks to prevent TypeErrors on corrupted library cache
+  const safeName = file.name || file.title || 'Unknown Title';
+  const safeFormat = (file.type || 'unknown').toUpperCase();
+  
+  card.querySelector('.book-title').textContent = truncate(safeName.replace(/\.[^/.]+$/, ""), 40);
   card.querySelector('.book-author').textContent = file.author || 'Unknown Author';
   
   // Format badge
-  card.querySelector('.badge-format').textContent = file.type.toUpperCase();
+  card.querySelector('.badge-format').textContent = safeFormat;
   
   // Fav status
   const favBtn = card.querySelector('.overlay-btn-fav');
@@ -2755,11 +2773,24 @@ function createBookCardElement(file, mode) {
     renderCurrentView();
   });
   
-  card.querySelector('.overlay-btn-remove')?.addEventListener('click', (e) => {
+  card.querySelector('.overlay-btn-remove')?.addEventListener('click', async (e) => {
     e.stopPropagation();
-    state.files = state.files.filter(f => f.id !== file.id);
-    renderCurrentView();
-    updateStats();
+    try {
+      if (window.electronAPI && window.electronAPI.library) {
+        await window.electronAPI.library.removeBook(file.id);
+      }
+      state.files = state.files.filter(f => f.id !== file.id);
+      
+      // Surgical DOM removal - NO SCROLL JUMP
+      document.querySelectorAll(`.book-card[data-id="${file.id}"]`).forEach(el => el.remove());
+      const row = document.getElementById(`row-${file.id}`);
+      if (row) row.remove();
+      
+      updateStats();
+      if (state.files.length === 0) renderCurrentView();
+    } catch (err) {
+      showToast('Error removing book', 'error');
+    }
   });
   
   // Clicking the card itself
@@ -2794,7 +2825,11 @@ addFiles = function(newFiles) {
     f.author = f.author || 'Unknown Author';
   });
   originalAddFiles(newFiles);
-  renderCurrentView();
+  
+  // Only re-render if NOT on library view (Library handles its own table, but Home recent needs an update)
+  if (state.currentView !== 'library') {
+    renderCurrentView();
+  }
 };
 
 // Ensure updates happen when table normally renders
@@ -2804,11 +2839,8 @@ renderTable = function() {
   if (state.currentView === 'library') renderLibrary();
 };
 
-const originalUpdateRowCover = updateRowCover;
-updateRowCover = function(id) {
-  originalUpdateRowCover(id);
-  renderCurrentView();
-};
+// Removed toxic `updateRowCover` monkey patch that was rebuilding the entire DOM
+// on every single async cover extraction, causing race conditions and reset scrolls.
 
 // Bind new nav listeners
 document.querySelectorAll('.nav-item[data-view]').forEach(btn => {

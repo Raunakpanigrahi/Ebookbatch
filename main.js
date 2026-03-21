@@ -33,7 +33,13 @@ function getLibraryDb() {
 
 function saveLibraryDb(data) {
   ensureLibraryDirs();
-  fs.writeFileSync(libraryDbPath, JSON.stringify(data, null, 2));
+  try {
+    fs.writeFileSync(libraryDbPath, JSON.stringify(data, null, 2));
+    return true;
+  } catch (err) {
+    console.error('[Library] Failed to save DB to disk:', err);
+    throw err;
+  }
 }
 
 // Keep a global reference to prevent garbage collection
@@ -95,7 +101,8 @@ ipcMain.handle('library:getBooks', () => {
 
 ipcMain.handle('library:addBook', (event, bookData) => {
   const db = getLibraryDb();
-  const existing = db.find(b => b.filePath === bookData.filePath);
+  const norm = p => (p || '').replace(/\\/g, '/').toLowerCase();
+  const existing = db.find(b => norm(b.filePath) === norm(bookData.filePath) && norm(b.filePath) !== '');
   if (existing) return { success: false, error: 'Book already in library', book: existing };
   
   const newBook = {
@@ -114,8 +121,12 @@ ipcMain.handle('library:addBook', (event, bookData) => {
     highlights: []
   };
   db.push(newBook);
-  saveLibraryDb(db);
-  return { success: true, book: newBook };
+  try {
+    saveLibraryDb(db);
+    return { success: true, book: newBook };
+  } catch (err) {
+    return { success: false, error: 'Database write failed: ' + err.message };
+  }
 });
 
 ipcMain.handle('library:updateBook', (event, id, updates) => {
