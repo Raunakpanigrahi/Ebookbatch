@@ -851,6 +851,7 @@ async function extractEpubCoverInlineBase64(bytes) {
     
     for (const entry of candidates) {
       const htmlText = await entry.async('string');
+      console.log('[Cover] S6 XHTML sample from', entry.name, ':', htmlText.substring(0, 800));
       
       // Pattern A - Standard img data URI
       let match = htmlText.match(/src=["']data:image\/(jpeg|jpg|png|gif|webp);base64,([A-Za-z0-9+/=]+)["']/i);
