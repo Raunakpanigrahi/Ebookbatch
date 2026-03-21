@@ -773,17 +773,28 @@ async function extractCoverBase64(file) {
     
     // If ePub failed or returned null, fall through to Strategy 5
     if (fallbackBase64) return fallbackBase64;
-    return await extractEpubCoverZipFallback(bytes);
+    fallbackBase64 = await extractEpubCoverZipFallback(bytes);
+    
+    // Strategy 6: Inline base64 fallback for OceanofPDF and corrupt manifests
+    if (!fallbackBase64) {
+      fallbackBase64 = await extractEpubCoverInlineBase64(bytes);
+    }
+    
+    if (fallbackBase64) return fallbackBase64;
   }
 
   return null;
 }
 
 async function extractEpubCoverZipFallback(bytes) {
+  console.log('[Cover] S5: JSZip available:', typeof JSZip !== 'undefined' ? 'YES' : 'NO', typeof window !== 'undefined' && window.JSZip ? 'window.JSZip YES' : 'window.JSZip NO');
+  console.log('[Cover] S5: bytes type:', typeof bytes, bytes instanceof ArrayBuffer ? 'ArrayBuffer' : bytes instanceof Uint8Array ? 'Uint8Array' : typeof Buffer !== 'undefined' && bytes instanceof Buffer ? 'Buffer' : typeof bytes === 'string' ? 'string len:' + bytes.length : 'unknown', 'byteLength:', bytes?.byteLength ?? bytes?.length);
   if (!window.JSZip) return null;
   console.log('[Cover] S5: Initiating raw ZIP scan fallback');
   try {
     const zip = await JSZip.loadAsync(bytes);
+    const allEntries = Object.values(zip.files).filter(f => !f.dir).map(f => f.name);
+    console.log('[Cover] S5: ALL zip entries:', JSON.stringify(allEntries));
     const imageRegex = /\.(jpe?g|png|gif|webp)$/i;
     
     // First pass: look specifically for obvious cover files
@@ -805,6 +816,68 @@ async function extractEpubCoverZipFallback(bytes) {
     return null;
   } catch (err) {
     console.warn('[Cover] S5: zip scan failed:', err.message);
+    return null;
+  }
+}
+
+async function extractEpubCoverInlineBase64(bytes) {
+  if (!window.JSZip) return null;
+  try {
+    const zip = await JSZip.loadAsync(bytes);
+    
+    // Get and sort candidate XHTML/HTML files
+    const entries = Object.values(zip.files)
+      .filter(f => !f.dir && /\.(xhtml|html)$/i.test(f.name));
+    
+    entries.sort((a, b) => {
+      const aLower = a.name.toLowerCase();
+      const bLower = b.name.toLowerCase();
+      
+      const aCover = aLower.includes('cover');
+      const bCover = bLower.includes('cover');
+      if (aCover && !bCover) return -1;
+      if (!aCover && bCover) return 1;
+      
+      const aChap = aLower.includes('chapter1') || aLower.includes('chapter01');
+      const bChap = bLower.includes('chapter1') || bLower.includes('chapter01');
+      if (aChap && !bChap) return -1;
+      if (!aChap && bChap) return 1;
+      
+      return aLower.localeCompare(bLower);
+    });
+    
+    // Limit to first 5
+    const candidates = entries.slice(0, 5);
+    
+    for (const entry of candidates) {
+      const htmlText = await entry.async('string');
+      
+      // Pattern A - Standard img data URI
+      let match = htmlText.match(/src=["']data:image\/(jpeg|jpg|png|gif|webp);base64,([A-Za-z0-9+/=]+)["']/i);
+      if (match && match[2].length >= 500) {
+        console.log('[Cover] S6: found inline base64 in:', entry.name, 'length:', match[2].length);
+        return match[2];
+      }
+      
+      // Pattern B - SVG/XHTML image element
+      match = htmlText.match(/xlink:href=["']data:image\/(jpeg|jpg|png|gif|webp);base64,([A-Za-z0-9+/=]+)["']/i);
+      if (match && match[2].length >= 500) {
+        console.log('[Cover] S6: found inline base64 in:', entry.name, 'length:', match[2].length);
+        return match[2];
+      }
+      
+      // Pattern C - Any data URI without quotes
+      match = htmlText.match(/data:image\/(jpeg|jpg|png|gif|webp);base64,([A-Za-z0-9+/=]{100,})/i);
+      if (match && match[2].length >= 500) {
+        console.log('[Cover] S6: found inline base64 in:', entry.name, 'length:', match[2].length);
+        return match[2];
+      }
+    }
+    
+    console.log('[Cover] S6: no inline images found');
+    return null;
+  } catch (err) {
+    console.warn('[Cover] S6 failed:', err.message);
     return null;
   }
 }
@@ -870,10 +943,16 @@ async function extractEpubCoverWithFallbacks(book, fileName) {
 
   // ── Strategy 2: Manifest scan by properties / id / href ─────────────────────
   // Handles EPUBs where cover image exists in manifest but metadata is non-standard
+  console.log('[Cover] manifest source check:', 'book.packaging?.manifest type:', typeof book.packaging?.manifest, 'book.resources?.assets length:', book.resources?.assets?.length, 'book.spine?.items length:', book.spine?.items?.length);
   try {
     const manifest = book.packaging?.manifest || {};
     const items = Object.values(manifest);
     console.log(`[Cover] S2: scanning ${items.length} manifest items for`, fileName);
+
+    if (items && items.length > 0) {
+      console.log('[Cover] S2: raw item[0] keys:', Object.keys(items[0]));
+      console.log('[Cover] S2: raw item[0] full:', JSON.stringify(items[0]));
+    }
 
     const imageItems = items.filter(item => {
       const mimeType = (item.mediaType || item['media-type'] || item.type || '').toLowerCase().trim();
