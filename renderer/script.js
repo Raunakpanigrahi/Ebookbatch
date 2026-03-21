@@ -671,56 +671,69 @@ function isValidCoverUrl(url) {
   return true;
 }
 
-async function loadCoversFor(files) {
-  console.log('[COVER DEBUG 1] loadCoversFor triggered, books count:', files?.length);
-  for (const f of files) {
-    console.log('[COVER DEBUG 2] Extracting cover for:', f.id, f.path);
-    try {
-      const b64Data = await extractCoverBase64(f);
+let isExtractingCovers = false;
+const extractionQueue = [];
 
-      // Guard: reject corrupted / micro-sized data that can't be a real image
-      const isValid = (b64Data && b64Data.length >= MIN_COVER_B64_LEN);
-      console.log('[COVER DEBUG 5] Validation result for:', f.id, 'valid:', !!isValid, 'src preview:', b64Data?.substring(0, 50));
-      
-      if (isValid) {
-        if (window.electronAPI && window.electronAPI.library) {
-          console.log('[COVER DEBUG 3] IPC cover request sent for:', f.id);
-          const res = await window.electronAPI.library.saveCover(f.id, b64Data);
-          console.log('[COVER DEBUG 4] IPC cover response for:', f.id, 'result type:', typeof res, 'length:', res?.coverUrl?.length ?? 'null');
-          if (res.success) {
-            f.coverUrl = res.coverUrl;
-            console.log('[COVER DEBUG 6] Assigned coverUrl to:', f.id, 'url preview:', f.coverUrl?.substring(0, 50));
-            if (f._libraryData) f._libraryData.coverImage = res.coverUrl;
+async function loadCoversFor(files) {
+  console.log('[COVER DEBUG 1] loadCoversFor queued, books count:', files?.length);
+  extractionQueue.push(...files);
+  
+  if (isExtractingCovers) return;
+  isExtractingCovers = true;
+  
+  try {
+    while (extractionQueue.length > 0) {
+      const f = extractionQueue.shift();
+      console.log('[COVER DEBUG 2] Extracting cover for:', f.id, f.path);
+      try {
+        const b64Data = await extractCoverBase64(f);
+
+        // Guard: reject corrupted / micro-sized data that can't be a real image
+        const isValid = (b64Data && b64Data.length >= MIN_COVER_B64_LEN);
+        console.log('[COVER DEBUG 5] Validation result for:', f.id, 'valid:', !!isValid, 'src preview:', b64Data?.substring(0, 50));
+        
+        if (isValid) {
+          if (window.electronAPI && window.electronAPI.library) {
+            console.log('[COVER DEBUG 3] IPC cover request sent for:', f.id);
+            const res = await window.electronAPI.library.saveCover(f.id, b64Data);
+            console.log('[COVER DEBUG 4] IPC cover response for:', f.id, 'result type:', typeof res, 'length:', res?.coverUrl?.length ?? 'null');
+            if (res.success) {
+              f.coverUrl = res.coverUrl;
+              console.log('[COVER DEBUG 6] Assigned coverUrl to:', f.id, 'url preview:', f.coverUrl?.substring(0, 50));
+              if (f._libraryData) f._libraryData.coverImage = res.coverUrl;
+            } else {
+              // saveCover failed (book not found in DB yet) — use inline data URL as fallback
+              console.warn('[Cover] saveCover failed for', f.name, '— using inline data URL');
+              f.coverUrl = `data:image/jpeg;base64,${b64Data}`;
+            }
           } else {
-            // saveCover failed (book not found in DB yet) — use inline data URL as fallback
-            console.warn('[Cover] saveCover failed for', f.name, '— using inline data URL');
+            // No library API — use inline data URL
             f.coverUrl = `data:image/jpeg;base64,${b64Data}`;
           }
         } else {
-          // No library API — use inline data URL
-          f.coverUrl = `data:image/jpeg;base64,${b64Data}`;
+          if (b64Data) {
+            console.warn('[Cover] Rejected suspiciously small cover data for', f.name,
+              `(${b64Data.length} chars — likely corrupt)`);
+          }
+          // No valid cover found — placeholder will show
+          f.coverUrl = null;
         }
-      } else {
-        if (b64Data) {
-          console.warn('[Cover] Rejected suspiciously small cover data for', f.name,
-            `(${b64Data.length} chars — likely corrupt)`);
-        }
-        // No valid cover found — placeholder will show
+      } catch (e) {
+        console.warn('[Cover] Extraction failed for', f.name, e);
         f.coverUrl = null;
+      } finally {
+        f.coverLoading = false;
+        // Surgical update: only repaint this book's card/row, not the whole grid
+        updateRowCover(f.id);
+        updateCardCover(f.id);
       }
-    } catch (e) {
-      console.warn('[Cover] Extraction failed for', f.name, e);
-      f.coverUrl = null;
-    } finally {
-      f.coverLoading = false;
-      // Surgical update: only repaint this book's card/row, not the whole grid
-      updateRowCover(f.id);
-      updateCardCover(f.id);
     }
+  } finally {
+    isExtractingCovers = false;
+    // After all extractions are done, do a single full render to catch any
+    // edge cases (e.g. items not yet in DOM when their cover finished)
+    renderLibraryGrid();
   }
-  // After all extractions are done, do a single full render to catch any
-  // edge cases (e.g. items not yet in DOM when their cover finished)
-  renderLibraryGrid();
 }
 
 async function extractCoverBase64(file) {
