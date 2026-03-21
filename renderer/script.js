@@ -178,19 +178,12 @@ const els = {
           showUI();
 
           // ── CRITICAL: Trigger cover extraction for books missing or with broken covers ──
-          // 'needsCover' catches two cases:
-          //   1. coverUrl is null/empty — never extracted
-          //   2. coverUrl starts with 'file://' (2 slashes) — old broken Windows path format.
-          //      Chromium treats 'file://C:/...' as host='C:' which is invalid.
-          //      Correct format is 'file:///C:/...' (3 slashes).
-          //      These are truthy strings so the old !f.coverUrl check missed them.
-          function isBrokenCoverUrl(url) {
-            if (!url) return true;
-            // Detect old 2-slash Windows paths: file://C:/ or file://d:/
-            if (/^file:\/\/[a-zA-Z]:/.test(url)) return true;
-            return false;
-          }
-          const needsCovers = mapped.filter(f => isBrokenCoverUrl(f.coverUrl));
+          // isValidCoverUrl checks for all known failure modes:
+          //   1. null / empty / too short
+          //   2. legacy 2-slash Windows path (file://C:/…) — Chromium rejects these
+          //   3. literal strings "null" or "undefined" persisted by bugs
+          //   4. very short base64/URLs that can't be a real image
+          const needsCovers = mapped.filter(f => !isValidCoverUrl(f.coverUrl));
           console.log('[Cover] Books needing extraction at startup:', needsCovers.length,
             '| Sample urls:', mapped.slice(0,3).map(f => f.coverUrl));
           if (needsCovers.length > 0) {
@@ -622,13 +615,14 @@ async function addFiles(newFiles) {
           f.coverLoading = true;
           addedBooks.push(f);
         } else if (res.book) {
-          // Already in library — restore the saved cover so we don't lose it
+          // Already in library — validate stored cover before trusting it
+          // (file may have been deleted/moved since last run)
           f._libraryData = res.book;
-          f.coverUrl = res.book.coverImage || null;
-          f.coverLoading = false;
-          // Still try to extract cover if it was never saved
+          const storedCover = res.book.coverImage || null;
+          f.coverUrl = isValidCoverUrl(storedCover) ? storedCover : null;
+          f.coverLoading = !f.coverUrl;
           if (!f.coverUrl) {
-            f.coverLoading = true;
+            // Stored cover is missing or invalid — schedule re-extraction
             addedBooks.push(f);
           }
         }
@@ -654,11 +648,31 @@ async function addFiles(newFiles) {
 }
 
 // ─── Cover Extraction ─────────────────────────────────────────────────────────
+
+// Minimum base64 length for a valid image (any real image is > 100 bytes → 136+ base64 chars)
+const MIN_COVER_B64_LEN = 136;
+
+/**
+ * Validate that a cover URL string is usable before trusting or assigning it.
+ * Catches: null/empty, too-short strings, legacy 2-slash Windows paths,
+ * literal "null"/"undefined" stored by bugs.
+ */
+function isValidCoverUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  if (url === 'null' || url === 'undefined') return false;
+  if (url.length < 20) return false;
+  // Legacy 2-slash Windows path: file://C:/ — Chromium treats "C:" as authority
+  if (/^file:\/\/[a-zA-Z]:/.test(url)) return false;
+  return true;
+}
+
 async function loadCoversFor(files) {
   for (const f of files) {
     try {
       const b64Data = await extractCoverBase64(f);
-      if (b64Data) {
+
+      // Guard: reject corrupted / micro-sized data that can't be a real image
+      if (b64Data && b64Data.length >= MIN_COVER_B64_LEN) {
         if (window.electronAPI && window.electronAPI.library) {
           const res = await window.electronAPI.library.saveCover(f.id, b64Data);
           if (res.success) {
@@ -666,7 +680,7 @@ async function loadCoversFor(files) {
             if (f._libraryData) f._libraryData.coverImage = res.coverUrl;
           } else {
             // saveCover failed (book not found in DB yet) — use inline data URL as fallback
-            console.warn('saveCover failed for', f.name, '— using inline data URL');
+            console.warn('[Cover] saveCover failed for', f.name, '— using inline data URL');
             f.coverUrl = `data:image/jpeg;base64,${b64Data}`;
           }
         } else {
@@ -674,18 +688,26 @@ async function loadCoversFor(files) {
           f.coverUrl = `data:image/jpeg;base64,${b64Data}`;
         }
       } else {
-        // No cover found in the file — leave coverUrl as null (placeholder will show)
+        if (b64Data) {
+          console.warn('[Cover] Rejected suspiciously small cover data for', f.name,
+            `(${b64Data.length} chars — likely corrupt)`);
+        }
+        // No valid cover found — placeholder will show
         f.coverUrl = null;
       }
     } catch (e) {
-      console.warn('Cover extraction failed for', f.name, e);
+      console.warn('[Cover] Extraction failed for', f.name, e);
       f.coverUrl = null;
     } finally {
       f.coverLoading = false;
+      // Surgical update: only repaint this book's card/row, not the whole grid
       updateRowCover(f.id);
-      renderLibraryGrid();
+      updateCardCover(f.id);
     }
   }
+  // After all extractions are done, do a single full render to catch any
+  // edge cases (e.g. items not yet in DOM when their cover finished)
+  renderLibraryGrid();
 }
 
 async function extractCoverBase64(file) {
@@ -841,10 +863,10 @@ async function extractEpubCoverWithFallbacks(book, fileName) {
         for (const img of imgs) {
           const src = img.getAttribute('src') || img.getAttribute('xlink:href') || '';
           if (!src) continue;
-          // Resolve relative to spine item's OPF path using book.resolve
-          const resolvedHref = book.resolve(src);
-          console.log('[Cover] S3: trying img src:', src, '→ resolved:', resolvedHref);
-          const b64 = await hrefToBase64(resolvedHref);
+          // Pass raw src to hrefToBase64 — it calls book.resolve() internally.
+          // Do NOT pre-resolve here; double-resolving corrupts the path.
+          console.log('[Cover] S3: trying img src:', src);
+          const b64 = await hrefToBase64(src);
           if (b64) {
             spineItem.unload();
             console.log('[Cover] S3 success for', fileName);
@@ -907,6 +929,72 @@ function updateRowCover(id) {
           <span class="cover-placeholder">${file.type.toUpperCase()}</span>
         </div>`;
     }
+  }
+}
+
+/**
+ * Surgically update a single book card's cover in the library grid.
+ * Called after each individual cover extraction completes so we avoid
+ * rebuilding the entire grid (which resets scroll position and can cause
+ * race conditions when multiple covers finish near-simultaneously).
+ */
+function updateCardCover(id) {
+  const file = state.files.find(f => f.id === id);
+  if (!file) return;
+
+  const hash = file.id.charCodeAt(0) % 5;
+  const gradients = [
+    'linear-gradient(135deg, #FF6B6B 0%, #FF8E8E 100%)',
+    'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+    'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
+    'linear-gradient(135deg, #fa709a 0%, #fee140 100%)',
+    'linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%)',
+  ];
+
+  // Find all cards in the library grid that correspond to this file.
+  // Cards don't have a direct data-id, so we match via the remove-button's data-id.
+  const cards = els.libraryGrid?.querySelectorAll('.book-card');
+  if (!cards) return;
+
+  for (const card of cards) {
+    const removeBtn = card.querySelector('[data-action="remove"][data-id]');
+    if (!removeBtn || removeBtn.dataset.id !== id) continue;
+
+    const container = card.querySelector('.book-cover-container');
+    if (!container) continue;
+
+    // Swap only the cover image / placeholder; leave overlay and progress intact
+    const existingCover = container.querySelector('.book-cover, .book-cover-placeholder');
+    if (existingCover) existingCover.remove();
+
+    const newCover = document.createElement(file.coverUrl ? 'img' : 'div');
+    if (file.coverUrl) {
+      newCover.src = file.coverUrl;
+      newCover.className = 'book-cover';
+      newCover.alt = 'Cover';
+      newCover.addEventListener('load', () =>
+        console.log('[Cover] Card IMG OK:', file.name)
+      );
+      newCover.addEventListener('error', () => {
+        console.error('[Cover] Card IMG FAIL:', file.name, file.coverUrl);
+        // Replace broken image with gradient placeholder so card is never blank
+        newCover.replaceWith(
+          Object.assign(document.createElement('div'), {
+            className: 'book-cover-placeholder',
+            style: `background: ${gradients[hash]}`,
+            textContent: file.type.toUpperCase(),
+          })
+        );
+      });
+    } else {
+      newCover.className = 'book-cover-placeholder';
+      newCover.style.background = gradients[hash];
+      newCover.textContent = file.type.toUpperCase();
+    }
+
+    // Insert before the overlay (first child of container)
+    container.insertBefore(newCover, container.firstChild);
+    break; // each id is unique
   }
 }
 

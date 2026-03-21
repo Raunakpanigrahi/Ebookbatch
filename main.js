@@ -134,8 +134,15 @@ ipcMain.handle('library:removeBook', (event, id) => {
   const index = db.findIndex(b => b.id === id);
   if (index !== -1) {
     const book = db[index];
-    if (book.coverImage && book.coverImage.includes(coversDir)) {
-      try { fs.unlinkSync(book.coverImage.replace('file://', '')); } catch(e) {}
+    if (book.coverImage && book.coverImage.includes('covers')) {
+      try {
+        // Strip file:/// prefix and normalize forward slashes to OS separators
+        const rawPath = book.coverImage
+          .replace(/^file:\/\/\//, '')   // remove file:///
+          .replace(/^file:\/\//, '')     // fallback: remove legacy file://
+          .replace(/\//g, path.sep);    // forward slash → OS separator
+        fs.unlinkSync(rawPath);
+      } catch(e) {}
     }
     db.splice(index, 1);
     saveLibraryDb(db);
