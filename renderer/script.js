@@ -759,19 +759,54 @@ async function extractCoverBase64(file) {
 
   if (file.type === 'epub') {
     if (!window.ePub) return null;
-    const book = ePub(bytes.buffer);
+    let fallbackBase64 = null;
+    let book = null;
     try {
+      book = ePub(bytes.buffer);
       await book.ready;
-      return await extractEpubCoverWithFallbacks(book, file.name);
+      fallbackBase64 = await extractEpubCoverWithFallbacks(book, file.name);
     } catch (e) {
-      console.warn('[Cover] EPUB cover extraction error for', file.name, e);
-      return null;
+      console.warn('[Cover] EPUB initialization/extraction error for', file.name, e);
     } finally {
-      try { book.destroy(); } catch (_) {}
+      try { if (book) book.destroy(); } catch (_) {}
     }
+    
+    // If ePub failed or returned null, fall through to Strategy 5
+    if (fallbackBase64) return fallbackBase64;
+    return await extractEpubCoverZipFallback(bytes);
   }
 
   return null;
+}
+
+async function extractEpubCoverZipFallback(bytes) {
+  if (!window.JSZip) return null;
+  console.log('[Cover] S5: Initiating raw ZIP scan fallback');
+  try {
+    const zip = await JSZip.loadAsync(bytes);
+    const imageRegex = /\.(jpe?g|png|gif|webp)$/i;
+    
+    // First pass: look specifically for obvious cover files
+    const coverRegex = /(cover|images?\/).*\.(jpe?g|png|gif|webp)$/i;
+    let targetEntry = Object.values(zip.files).find(f => !f.dir && coverRegex.test(f.name));
+    
+    // Second pass: grab literally any image in the ZIP
+    if (!targetEntry) {
+      targetEntry = Object.values(zip.files).find(f => !f.dir && imageRegex.test(f.name));
+    }
+    
+    if (targetEntry) {
+      console.log('[Cover] S5: zip scan found image at:', targetEntry.name);
+      const b64 = await targetEntry.async('base64');
+      return b64;
+    }
+    
+    console.log('[Cover] S5: zip scan failed to find any image entries');
+    return null;
+  } catch (err) {
+    console.warn('[Cover] S5: zip scan failed:', err.message);
+    return null;
+  }
 }
 
 /**
@@ -840,7 +875,12 @@ async function extractEpubCoverWithFallbacks(book, fileName) {
     const items = Object.values(manifest);
     console.log(`[Cover] S2: scanning ${items.length} manifest items for`, fileName);
 
-    const imageItems = items.filter(item => item.type && item.type.startsWith('image/'));
+    const imageItems = items.filter(item => {
+      const mimeType = (item.mediaType || item['media-type'] || item.type || '').toLowerCase().trim();
+      const href = (item.href || '').toLowerCase();
+      const hasImageExt = /\.(jpe?g|png|gif|webp|svg|bmp)$/.test(href);
+      return mimeType.startsWith('image/') || hasImageExt;
+    });
     console.log(`[Cover] S2: found ${imageItems.length} image items`);
 
     const candidate =
@@ -898,11 +938,18 @@ async function extractEpubCoverWithFallbacks(book, fileName) {
   try {
     const manifest = book.packaging?.manifest || {};
     const items = Object.values(manifest);
-    const imageItems = items.filter(i => i.type && i.type.startsWith('image/'));
+    const imageItems = items.filter(i => {
+      const mimeType = (i.mediaType || i['media-type'] || i.type || '').toLowerCase().trim();
+      const href = (i.href || '').toLowerCase();
+      const hasImageExt = /\.(jpe?g|png|gif|webp|svg|bmp)$/.test(href);
+      return mimeType.startsWith('image/') || hasImageExt;
+    });
     // Prefer JPEG (most covers are JPEG); fallback to PNG/etc
+    const getMime = (i) => (i.mediaType || i['media-type'] || i.type || '').toLowerCase().trim();
+    const isJpeg = (i) => getMime(i) === 'image/jpeg' || /\.(jpe?g)$/i.test(i.href || '');
     const sorted = [
-      ...imageItems.filter(i => i.type === 'image/jpeg'),
-      ...imageItems.filter(i => i.type !== 'image/jpeg'),
+      ...imageItems.filter(i => isJpeg(i)),
+      ...imageItems.filter(i => !isJpeg(i)),
     ];
     console.log(`[Cover] S4: trying ${Math.min(sorted.length, 5)} image(s) for`, fileName);
     for (const item of sorted.slice(0, 5)) {
