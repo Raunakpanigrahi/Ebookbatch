@@ -6,6 +6,22 @@
 
 'use strict';
 
+window.addEventListener('unhandledrejection', (event) => {
+  const src = event.filename || '';
+  const reason = event.reason;
+  if (src.includes('epub.min.js') ||
+      src.includes('epub.min') ||
+      (typeof reason === 'object' &&
+       reason !== null &&
+       !reason.message &&
+       !reason.stack)) {
+    console.warn('[Cover] Suppressed epub.js internal',
+      'rejection:', reason);
+    event.preventDefault();
+    return;
+  }
+});
+
 // ─── App State ────────────────────────────────────────────────────────────────
 const state = {
   files: [],           // All loaded FileInfo objects
@@ -778,11 +794,29 @@ async function extractCoverBase64(file) {
     let fallbackBase64 = null;
     let book = null;
     try {
-      book = ePub(bytes.buffer);
-      await book.ready;
-      fallbackBase64 = await extractEpubCoverWithFallbacks(book, file.name);
+      await new Promise((resolve, reject) => {
+        try {
+          book = ePub(bytes.buffer);
+          const timer = setTimeout(() => {
+            reject(new Error('epub.js init timed out'));
+          }, 15000);
+          book.ready
+            .then(() => { clearTimeout(timer); resolve(); })
+            .catch(err => {
+              clearTimeout(timer);
+              reject(new Error('epub.ready failed: ' +
+                (err?.message || String(err))));
+            });
+        } catch (syncErr) {
+          reject(syncErr);
+        }
+      });
+      fallbackBase64 = await extractEpubCoverWithFallbacks(
+        book, file.name);
     } catch (e) {
-      console.warn('[Cover] EPUB initialization/extraction error for', file.name, e);
+      console.warn('[Cover] EPUB init failed for',
+        file.name, '—', e.message);
+      book = null;
     } finally {
       try { if (book) book.destroy(); } catch (_) {}
     }
